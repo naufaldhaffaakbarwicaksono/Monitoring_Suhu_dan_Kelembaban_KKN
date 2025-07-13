@@ -75,6 +75,21 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
+// API endpoint for latest sensor data (alternative to Socket.IO)
+app.get('/api/latest', async (req, res) => {
+  try {
+    const latestReading = await dbAccess.getReadings({ limit: 1 });
+    if (latestReading.length > 0) {
+      res.json(latestReading[0]);
+    } else {
+      res.json({ temperature: 0, humidity: 0, timestamp: new Date().toISOString() });
+    }
+  } catch (error) {
+    console.error('Error in /api/latest:', error);
+    res.status(500).json({ error: 'Failed to fetch latest reading', details: error.message });
+  }
+});
+
 // Data structure
 let sensorData = {
   temperature: 0,
@@ -215,15 +230,20 @@ io.on('connection', async (socket) => {
   });
 });
 
-// Start server
-const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+// Export app for Vercel
+module.exports = app;
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('Shutting down gracefully...');
-  await dbAccess.disconnect();
-  process.exit(0);
-});
+// Start server (only in non-production environment)
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 3000;
+  http.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+
+  // Graceful shutdown
+  process.on('SIGINT', async () => {
+    console.log('Shutting down gracefully...');
+    await dbAccess.disconnect();
+    process.exit(0);
+  });
+}
