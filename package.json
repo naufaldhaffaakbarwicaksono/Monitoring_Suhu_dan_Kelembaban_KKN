@@ -1,0 +1,30 @@
+{
+  "name": "sensor-monitoring",
+  "version": "1.0.0",
+  "description": "Monitoring Suhu dan Kelembaban Ruangan",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "db:health": "node db-health-check.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.11.1",
+    "dotenv": "^17.2.0",
+    "ejs": "^3.1.8",
+    "express": "^4.18.2",
+    "mqtt": "^5.13.2",
+    "pg": "^8.16.3",
+    "prisma": "^6.11.1",
+    "socket.io": "^4.7.2"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.4",
+    "nodemon": "^3.0.2"
+  }
+}

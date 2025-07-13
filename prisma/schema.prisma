@@ -1,0 +1,34 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model SensorReading {
+  id          Int      @id @default(autoincrement())
+  temperature Float
+  humidity    Float
+  timestamp   DateTime @default(now())
+  location    String?  @default("Default Room")
+  deviceId    String?  @default("SHT20-001")
+  receivedAt  DateTime @default(now())
+
+  @@map("sensor_readings")
+}
+
+model DailyAverage {
+  id           Int      @id @default(autoincrement())
+  date         DateTime @unique @db.Date
+  avgTemp      Float    @map("avg_temperature")
+  avgHumidity  Float    @map("avg_humidity")
+  maxTemp      Float    @map("max_temperature")
+  minTemp      Float    @map("min_temperature")
+  maxHumidity  Float    @map("max_humidity")
+  minHumidity  Float    @map("min_humidity")
+  readingCount Int      @map("reading_count")
+
+  @@map("daily_averages")
+}

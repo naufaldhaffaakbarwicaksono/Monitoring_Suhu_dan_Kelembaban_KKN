@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "sensor_readings" ADD COLUMN     "deviceId" TEXT DEFAULT 'SHT20-001',
+ADD COLUMN     "receivedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
