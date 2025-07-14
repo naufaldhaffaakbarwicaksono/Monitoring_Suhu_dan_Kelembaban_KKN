@@ -1,176 +1,166 @@
-# 🌡️ Sensor Monitoring System
+# 🌡️ Sensor Monitoring System - Vercel Ready
 
-Simple and clean temperature & humidity monitoring system with real-time dashboard.
+## 📋 Overview
+Sistem monitoring suhu dan kelembaban yang dioptimalkan untuk deployment di Vercel serverless platform.
 
-## ✨ Features
+## ⚠️ MQTT Important Notice
+**MQTT persistent connections TIDAK DIDUKUNG di Vercel** karena serverless functions bersifat stateless dan memiliki timeout limit.
 
-- **Real-time Dashboard** - Live sensor data visualization
-- **Simple API** - Clean REST endpoints for data
-- **Database Storage** - PostgreSQL with Prisma ORM
-- **Vercel Ready** - Optimized for serverless deployment
-- **ESP32 Compatible** - Direct HTTP POST from IoT devices
+## ✅ Solusi yang Diimplementasikan
 
-## 🚀 Quick Start
+### 1. HTTP POST Endpoints (Primary)
+- `POST /api/sensor/data` - Terima data dari ESP32/IoT devices
+- `POST /api/sensor/test` - Generate random test data
+- `POST /api/mqtt/webhook` - Webhook untuk MQTT bridge external
 
-### Development
-```bash
-# Install dependencies
-npm install
-
-# Setup environment
-cp .env.example .env
-# Edit .env with your DATABASE_URL
-
-# Generate Prisma client
-npm run db:generate
-
-# Start development server
-npm run dev
-```
-
-### Production (Vercel)
-```bash
-# Push to GitHub
-git push origin main
-
-# Deploy to Vercel
-# 1. Import GitHub repo to Vercel
-# 2. Set DATABASE_URL environment variable
-# 3. Deploy
-```
-
-## 📡 API Endpoints
-
-### Core Endpoints
-- `GET /` - Dashboard
+### 2. API Endpoints
+- `GET /` - Dashboard web interface
 - `GET /api/health` - Health check
-- `GET /api/latest` - Latest sensor reading
-- `GET /api/dashboard` - Complete dashboard data
+- `GET /api/latest` - Data sensor terbaru
+- `GET /api/readings` - List semua readings
+- `GET /api/stats` - Statistik sistem
+- `GET /api/esp32/guide` - Panduan integrasi ESP32
 
-### Data Endpoints
-- `GET /api/readings?hours=3` - Get readings (default: last 3 hours)
-- `GET /api/stats?hours=24` - Get statistics (default: last 24 hours)
-- `POST /api/sensor/data` - Insert single reading
-- `POST /api/sensor/batch` - Insert multiple readings
+## 🚀 Deployment
 
-### Example Usage
+### Prerequisites
+1. **Database**: PostgreSQL di Supabase
+2. **Deployment**: Vercel account terhubung ke GitHub
+3. **Environment Variables**: Set di Vercel dashboard
 
-**Send sensor data:**
-```bash
-curl -X POST http://localhost:3000/api/sensor/data \
-  -H "Content-Type: application/json" \
-  -d '{
-    "temperature": 25.5,
-    "humidity": 60.2,
-    "deviceId": "ESP32-001",
-    "location": "Living Room"
-  }'
+### Environment Variables
+```env
+DATABASE_URL=postgresql://postgres.xxx:xxx@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres
+MQTT_HOST=your-broker.hivemq.cloud
+MQTT_PORT=8883
+MQTT_USERNAME=your-username
+MQTT_PASSWORD=your-password
+NODE_ENV=production
 ```
 
-**ESP32 Arduino Code:**
+### Auto Deployment
+```bash
+git add .
+git commit -m "Deploy sensor monitoring system"
+git push origin main
+```
+
+## 📡 ESP32 Integration
+
+### HTTP POST Method (Recommended)
 ```cpp
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <DHT.h>
+
+const char* serverURL = "https://your-app.vercel.app/api/sensor/data";
 
 void sendSensorData(float temp, float hum) {
   HTTPClient http;
-  http.begin("https://your-app.vercel.app/api/sensor/data");
+  http.begin(serverURL);
   http.addHeader("Content-Type", "application/json");
   
   DynamicJsonDocument doc(1024);
   doc["temperature"] = temp;
   doc["humidity"] = hum;
-  doc["deviceId"] = "ESP32-001";
+  doc["device_id"] = "esp32_001";
   
   String jsonString;
   serializeJson(doc, jsonString);
   
-  int responseCode = http.POST(jsonString);
-  if (responseCode == 200) {
-    Serial.println("✅ Data sent successfully");
+  int httpResponseCode = http.POST(jsonString);
+  
+  if (httpResponseCode > 0) {
+    String response = http.getString();
+    Serial.println("✅ Data sent: " + response);
+  } else {
+    Serial.println("❌ Error: " + String(httpResponseCode));
   }
   
   http.end();
 }
 ```
 
-## 🔧 Configuration
+## 🧪 Testing
 
-### Environment Variables
-```env
-DATABASE_URL="postgresql://user:pass@host:5432/db"
-PORT=3000
-```
-
-### Database Schema
-```sql
--- Sensor readings table
-CREATE TABLE sensor_readings (
-  id SERIAL PRIMARY KEY,
-  temperature FLOAT NOT NULL,
-  humidity FLOAT NOT NULL,
-  timestamp TIMESTAMP DEFAULT NOW(),
-  device_id VARCHAR(255) DEFAULT 'SENSOR-001',
-  location VARCHAR(255) DEFAULT 'Unknown',
-  received_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-## 📊 Testing
-
+### Manual Testing
 ```bash
-# Test all endpoints
-node test.js
+# Health check
+curl https://your-app.vercel.app/api/health
 
-# Test production
-node test.js https://your-app.vercel.app
+# Send test data
+curl -X POST https://your-app.vercel.app/api/sensor/test
+
+# Send manual data
+curl -X POST https://your-app.vercel.app/api/sensor/data \
+  -H "Content-Type: application/json" \
+  -d '{"temperature": 25.5, "humidity": 60.2}'
+
+# Get latest data
+curl https://your-app.vercel.app/api/latest
+
+# Get statistics
+curl https://your-app.vercel.app/api/stats
 ```
 
-## 🎯 Simplified Architecture
+## 📊 Features
+
+### ✅ Implemented
+- [x] HTTP POST sensor data ingestion
+- [x] Real-time web dashboard
+- [x] Data validation and error handling
+- [x] PostgreSQL database integration
+- [x] Responsive UI with charts
+- [x] Comprehensive error handling
+- [x] ESP32 integration guide
+- [x] Automatic Vercel deployment
+
+### ❌ Not Supported (Serverless Limitations)
+- [ ] MQTT persistent connections
+- [ ] WebSocket real-time updates
+- [ ] Background processing
+- [ ] Long-running connections
+
+## 🔧 Architecture
 
 ```
-IoT Device/ESP32 → HTTP POST → Vercel API → PostgreSQL → Dashboard
+ESP32 Sensor → HTTP POST → Vercel Function → PostgreSQL Database
+                    ↓
+               Web Dashboard (EJS)
 ```
 
-**Key Simplifications:**
-- ✅ Removed complex MQTT service
-- ✅ Direct database queries with Prisma
-- ✅ Single API file for all endpoints  
-- ✅ Eliminated unnecessary dependencies
-- ✅ Clean error handling and validation
-- ✅ Optimized for serverless deployment
+## 🛠️ Development
 
-## 📱 Dashboard Features
+### Local Setup
+```bash
+# Clone repository
+git clone https://github.com/naufaldhaffaakbarwicaksono/Monitoring_Suhu_dan_Kelembaban_KKN.git
+cd Monitoring_Suhu_dan_Kelembaban_KKN
 
-- **Live Temperature/Humidity Display**
-- **Historical Charts** (last 24 hours)
-- **Statistics Panel** (min/max/average)
-- **Responsive Design** (mobile-friendly)
-- **Auto-refresh** every 30 seconds
+# Install dependencies
+npm install
 
-## 🚨 Data Validation
+# Setup environment
+cp .env.example .env
+# Edit .env with your database credentials
 
-- Temperature: -50°C to 100°C
-- Humidity: 0% to 100%
-- Required fields: temperature, humidity
-- Optional: deviceId, location, timestamp
+# Generate Prisma client
+npx prisma generate
 
-## 📈 Performance
+# Run development server
+npm run dev
+```
 
-- **Dashboard load**: ~200ms
-- **API response**: ~50ms
-- **Database queries**: Optimized with indexes
-- **Vercel cold start**: ~500ms
+### Available Scripts
+- `npm start` - Production server
+- `npm run dev` - Development with nodemon
+- `npm run build` - Build for production
+- `npm run db:migrate` - Run database migrations
+- `npm run db:studio` - Open Prisma Studio
 
-## 🛠️ Tech Stack
+## 📝 License
+MIT License - Feel free to use and modify
 
-- **Backend**: Node.js + Express
-- **Database**: PostgreSQL + Prisma ORM
-- **Frontend**: EJS + Vanilla JS + Chart.js
-- **Deployment**: Vercel Serverless
-- **Styling**: Custom CSS + Responsive Design
-
----
-
-**Simple, Fast, Reliable** ⚡
+## 👨‍💻 Author
+Naufal Dhaffa - KKN Project 2025

@@ -19,5 +19,13 @@
       "src": "/(.*)",
       "dest": "/api/index.js"
     }
-  ]
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "build": {
+    "env": {
+      "ENABLE_PRISMA_MIGRATE": "1"
+    }
+  }
 }

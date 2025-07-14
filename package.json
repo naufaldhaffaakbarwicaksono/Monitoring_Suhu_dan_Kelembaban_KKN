@@ -6,14 +6,14 @@
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
-    "build": "prisma generate",
+    "build": "prisma generate && prisma migrate deploy",
     "postinstall": "prisma generate",
+    "vercel-build": "prisma generate && prisma migrate deploy",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "test": "node test.js",
-    "vercel-build": "prisma generate"
+    "test": "node test.js"
   },
   "dependencies": {
     "@prisma/client": "^6.11.1",

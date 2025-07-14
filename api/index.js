@@ -15,28 +15,86 @@ const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
 const app = express();
-const prisma = new PrismaClient();
+
+// Initialize Prisma with optimized settings for serverless
+const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL,
+    },
+  },
+});
+
+// Global error handler untuk Prisma
+process.on('beforeExit', async () => {
+  await prisma.$disconnect();
+});
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '../public')));
+
+// Security headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
+});
 
 // Setup EJS
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '../views'));
 
-// Save sensor data to database
+// Utility function untuk format response
+function formatSuccessResponse(data, message = 'Success', meta = {}) {
+  return {
+    success: true,
+    message,
+    data,
+    timestamp: new Date().toISOString(),
+    ...meta
+  };
+}
+
+function formatErrorResponse(error, message = 'Error occurred', statusCode = 500) {
+  return {
+    success: false,
+    error: message,
+    details: error instanceof Error ? error.message : error,
+    timestamp: new Date().toISOString(),
+    statusCode
+  };
+}
+
+// Save sensor data to database with validation
 async function saveSensorData(data) {
   try {
+    // Validate input data
+    const temperature = parseFloat(data.temperature);
+    const humidity = parseFloat(data.humidity);
+    
+    if (isNaN(temperature) || isNaN(humidity)) {
+      throw new Error('Invalid temperature or humidity values');
+    }
+    
+    if (temperature < -50 || temperature > 100) {
+      throw new Error('Temperature out of valid range (-50°C to 100°C)');
+    }
+    
+    if (humidity < 0 || humidity > 100) {
+      throw new Error('Humidity out of valid range (0% to 100%)');
+    }
+    
     const sensorReading = await prisma.sensorReading.create({
       data: {
-        temperature: data.temperature,
-        humidity: data.humidity,
+        temperature: temperature,
+        humidity: humidity,
         timestamp: new Date()
       }
     });
     
-    console.log('💾 Saved to database:', sensorReading.id);
+    console.log('💾 Saved to database:', sensorReading.id, `T:${temperature}°C H:${humidity}%`);
     return sensorReading;
   } catch (error) {
     console.error('❌ Database save error:', error);
@@ -88,23 +146,13 @@ app.post('/api/mqtt/webhook', async (req, res) => {
     if (topic === 'sensor/data' && typeof temperature === 'number' && typeof humidity === 'number') {
       const result = await saveSensorData({ temperature, humidity });
       
-      res.json({
-        success: true,
-        message: 'Sensor data saved',
-        id: result.id
-      });
+      res.json(formatSuccessResponse(null, 'Sensor data saved', { id: result.id }));
     } else {
-      res.status(400).json({
-        success: false,
-        error: 'Invalid sensor data format'
-      });
+      res.status(400).json(formatErrorResponse('Invalid sensor data format'));
     }
   } catch (error) {
     console.error('❌ MQTT webhook error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json(formatErrorResponse(error));
   }
 });
 
@@ -119,24 +167,13 @@ app.post('/api/sensor/data', async (req, res) => {
     if (typeof temperature === 'number' && typeof humidity === 'number') {
       const result = await saveSensorData({ temperature, humidity });
       
-      res.json({
-        success: true,
-        message: 'Data saved successfully',
-        id: result.id,
-        timestamp: result.timestamp
-      });
+      res.json(formatSuccessResponse(result, 'Data saved successfully'));
     } else {
-      res.status(400).json({
-        success: false,
-        error: 'Invalid data format. Required: {temperature: number, humidity: number}'
-      });
+      res.status(400).json(formatErrorResponse('Invalid data format. Required: {temperature: number, humidity: number}'));
     }
   } catch (error) {
     console.error('❌ Sensor data error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json(formatErrorResponse(error));
   }
 });
 
@@ -147,16 +184,10 @@ app.get('/api/latest', async (req, res) => {
       orderBy: { timestamp: 'desc' }
     });
     
-    res.json({
-      success: true,
-      data: latest
-    });
+    res.json(formatSuccessResponse(latest));
   } catch (error) {
     console.error('❌ API latest error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json(formatErrorResponse(error));
   }
 });
 
@@ -170,17 +201,10 @@ app.get('/api/readings', async (req, res) => {
       take: parseInt(limit)
     });
     
-    res.json({
-      success: true,
-      data: readings,
-      count: readings.length
-    });
+    res.json(formatSuccessResponse(readings, 'Readings fetched', { count: readings.length }));
   } catch (error) {
     console.error('❌ API readings error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json(formatErrorResponse(error));
   }
 });
 
@@ -229,18 +253,10 @@ app.post('/api/sensor/test', async (req, res) => {
     
     const result = await saveSensorData(testData);
     
-    res.json({
-      success: true,
-      message: 'Test data generated and saved',
-      data: testData,
-      id: result.id
-    });
+    res.json(formatSuccessResponse(testData, 'Test data generated and saved'));
   } catch (error) {
     console.error('❌ Test data error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json(formatErrorResponse(error));
   }
 });
 
@@ -265,23 +281,14 @@ app.get('/api/stats', async (req, res) => {
       }
     });
     
-    res.json({
-      success: true,
-      stats: {
-        total_readings: totalReadings,
-        readings_24h: readings24h,
-        latest_reading: latest,
-        deployment: 'Vercel Serverless',
-        mqtt_status: 'Not supported in serverless',
-        recommended_method: 'HTTP POST to /api/sensor/data'
-      }
-    });
+    res.json(formatSuccessResponse({
+      total_readings: totalReadings,
+      readings_24h: readings24h,
+      latest_reading: latest
+    }, 'Statistics fetched'));
   } catch (error) {
     console.error('❌ API stats error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json(formatErrorResponse(error));
   }
 });
 
