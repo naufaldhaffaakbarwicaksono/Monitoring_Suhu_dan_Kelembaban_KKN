@@ -1,14 +1,12 @@
 /**
- * MQTT Sensor Monitoring for Vercel Serverless
+ * Vercel-Compatible Sensor Monitoring
  * 
- * IMPORTANT: MQTT persistent connections don't work well in Vercel serverless functions
- * because functions are stateless and have execution time limits.
+ * MQTT PERSISTENT CONNECTIONS TIDAK BISA DI VERCEL!
  * 
- * SOLUTIONS:
- * 1. Use MQTT webhooks (MQTT broker sends HTTP POST to your API)
- * 2. Use polling approach (periodically check MQTT messages)
- * 3. Use external MQTT-to-HTTP bridge service
- * 4. Deploy to a platform that supports persistent connections (Railway, Heroku, VPS)
+ * Solusi yang tersedia:
+ * 1. HTTP POST langsung dari ESP32 (RECOMMENDED)
+ * 2. MQTT Bridge service eksternal 
+ * 3. Polling MQTT messages (dengan timeout yang pendek)
  */
 
 const express = require('express');
@@ -61,8 +59,8 @@ app.get('/', async (req, res) => {
     const stats = {
       totalReadings,
       lastReading: latestReadings[0] || null,
-      mqttBroker: process.env.MQTT_HOST,
-      mqttPort: process.env.MQTT_PORT
+      deployment: 'Vercel Serverless',
+      note: 'MQTT persistent connections not supported. Use HTTP POST endpoints.'
     };
 
     res.render('index', {
@@ -190,26 +188,149 @@ app.get('/api/readings', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    service: 'MQTT Sensor Monitor',
+    service: 'Sensor Monitor (Vercel)',
     timestamp: new Date().toISOString(),
+    mqtt_support: false,
+    mqtt_note: 'Use HTTP POST endpoints instead',
     endpoints: {
-      mqtt_webhook: '/api/mqtt/webhook',
-      sensor_data: '/api/sensor/data',
-      latest: '/api/latest',
-      readings: '/api/readings'
+      sensor_data: '/api/sensor/data (POST)',
+      test_data: '/api/sensor/test (POST)', 
+      latest: '/api/latest (GET)',
+      readings: '/api/readings (GET)',
+      stats: '/api/stats (GET)',
+      esp32_guide: '/api/esp32/guide (GET)'
     }
   });
 });
 
-// MQTT Configuration Info endpoint
+// MQTT Configuration Info endpoint (Legacy - for reference only)
 app.get('/api/mqtt/config', (req, res) => {
   res.json({
+    warning: 'MQTT persistent connections are NOT supported in Vercel',
     broker: process.env.MQTT_HOST,
     port: process.env.MQTT_PORT,
     topic: 'sensor/data',
+    alternative_solution: 'Use HTTP POST instead',
     webhook_url: `${req.protocol}://${req.get('host')}/api/mqtt/webhook`,
     direct_post_url: `${req.protocol}://${req.get('host')}/api/sensor/data`,
-    note: 'MQTT persistent connections are not supported in Vercel serverless. Use webhooks or direct HTTP POST.'
+    esp32_guide: `${req.protocol}://${req.get('host')}/api/esp32/guide`,
+    note: 'Consider deploying to Railway, Heroku, or VPS for MQTT support'
+  });
+});
+
+// Test endpoint untuk simulasi data sensor
+app.post('/api/sensor/test', async (req, res) => {
+  try {
+    // Generate random sensor data
+    const testData = {
+      temperature: Math.round((Math.random() * 15 + 20) * 100) / 100, // 20-35°C
+      humidity: Math.round((Math.random() * 40 + 40) * 100) / 100,    // 40-80%
+    };
+    
+    const result = await saveSensorData(testData);
+    
+    res.json({
+      success: true,
+      message: 'Test data generated and saved',
+      data: testData,
+      id: result.id
+    });
+  } catch (error) {
+    console.error('❌ Test data error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API endpoint untuk statistik
+app.get('/api/stats', async (req, res) => {
+  try {
+    const totalReadings = await prisma.sensorReading.count();
+    
+    const latest = await prisma.sensorReading.findFirst({
+      orderBy: { timestamp: 'desc' }
+    });
+    
+    // Get readings from last 24 hours
+    const since24h = new Date();
+    since24h.setHours(since24h.getHours() - 24);
+    
+    const readings24h = await prisma.sensorReading.count({
+      where: {
+        timestamp: {
+          gte: since24h
+        }
+      }
+    });
+    
+    res.json({
+      success: true,
+      stats: {
+        total_readings: totalReadings,
+        readings_24h: readings24h,
+        latest_reading: latest,
+        deployment: 'Vercel Serverless',
+        mqtt_status: 'Not supported in serverless',
+        recommended_method: 'HTTP POST to /api/sensor/data'
+      }
+    });
+  } catch (error) {
+    console.error('❌ API stats error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ESP32 Integration guide endpoint
+app.get('/api/esp32/guide', (req, res) => {
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  
+  res.json({
+    title: 'ESP32 Integration Guide for Vercel',
+    mqtt_issue: 'MQTT persistent connections are not supported in Vercel serverless functions',
+    solution: 'Use HTTP POST instead of MQTT',
+    endpoint: `${baseUrl}/api/sensor/data`,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    payload: {
+      temperature: 25.5,
+      humidity: 60.2,
+      device_id: 'esp32_001'
+    },
+    esp32_code_example: `
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+void sendSensorData(float temp, float hum) {
+  HTTPClient http;
+  http.begin("${baseUrl}/api/sensor/data");
+  http.addHeader("Content-Type", "application/json");
+  
+  DynamicJsonDocument doc(1024);
+  doc["temperature"] = temp;
+  doc["humidity"] = hum;
+  doc["device_id"] = "esp32_001";
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  int httpResponseCode = http.POST(jsonString);
+  
+  if (httpResponseCode > 0) {
+    String response = http.getString();
+    Serial.println("Response: " + response);
+  }
+  
+  http.end();
+}
+    `
   });
 });
 
