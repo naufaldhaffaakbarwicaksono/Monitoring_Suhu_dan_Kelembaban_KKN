@@ -25,9 +25,10 @@ document.addEventListener('DOMContentLoaded', function() {
   let fullscreenChart = null; // Fullscreen chart instance
   let isFullscreenMode = false;
   
-  // MQTT variables
-  let mqttStatus = { connected: false, retainMessagesCount: 0 };
-  let retainMessages = [];
+  // HTTP Polling variables (replaces MQTT)
+  let connectionStatus = { connected: false, lastPoll: null };
+  let pollingInterval = null;
+  let pollingFrequency = 5000; // 5 seconds
   
   // Initialize chart after a small delay to ensure DOM is ready
   setTimeout(() => {
@@ -38,30 +39,80 @@ document.addEventListener('DOMContentLoaded', function() {
     if (chart) {
       console.log('✅ Chart initialized successfully, loading initial data...');
       loadDashboardData();
+      startPolling(); // Start HTTP polling for real-time updates
     } else {
       console.error('❌ Chart initialization failed');
     }
   }, 500);
   
-  // MQTT Status update functions
-  function updateMQTTStatus() {
-    fetch('/api/mqtt/status')
+  // HTTP Polling functions (replaces MQTT)
+  function startPolling() {
+    console.log('🔄 Starting HTTP polling for real-time updates...');
+    
+    // Initial status update
+    updateConnectionStatus();
+    
+    // Set up polling interval
+    pollingInterval = setInterval(() => {
+      updateConnectionStatus();
+      // Only fetch new data if we're not already loading
+      if (!isLoadingData) {
+        checkForNewData();
+      }
+    }, pollingFrequency);
+  }
+  
+  function updateConnectionStatus() {
+    fetch('/api/health')
       .then(response => response.json())
       .then(status => {
-        mqttStatus = status;
-        const statusElement = document.getElementById('mqtt-status');
-        if (statusElement) {
-          statusElement.innerHTML = `
-            <div class="mqtt-status ${status.connected ? 'connected' : 'disconnected'}">
-              <span class="status-indicator ${status.connected ? 'online' : 'offline'}"></span>
-              MQTT: ${status.connected ? 'Connected' : 'Disconnected'}
-              <span class="retain-count">(${status.retainMessagesCount} retained)</span>
-            </div>
-          `;
+        connectionStatus = { 
+          connected: true, 
+          lastPoll: new Date().toISOString(),
+          service: status.service || 'HTTP API'
+        };
+        updateStatusDisplay();
+      })
+      .catch(error => {
+        console.error('Connection check failed:', error);
+        connectionStatus = { connected: false, lastPoll: new Date().toISOString() };
+        updateStatusDisplay();
+      });
+  }
+  
+  function updateStatusDisplay() {
+    const statusElement = document.getElementById('mqtt-status');
+    if (statusElement) {
+      const lastPollTime = connectionStatus.lastPoll ? 
+        new Date(connectionStatus.lastPoll).toLocaleTimeString() : 'Never';
+      
+      statusElement.innerHTML = `
+        <div class="mqtt-status ${connectionStatus.connected ? 'connected' : 'disconnected'}">
+          <span class="status-indicator ${connectionStatus.connected ? 'online' : 'offline'}"></span>
+          API: ${connectionStatus.connected ? 'Connected' : 'Disconnected'}
+          <small style="display: block; font-size: 0.8em; opacity: 0.7;">
+            Last update: ${lastPollTime}
+          </small>
+        </div>
+      `;
+    }
+  }
+  
+  function checkForNewData() {
+    fetch('/api/latest')
+      .then(response => response.json())
+      .then(result => {
+        if (result.success && result.data) {
+          const now = Date.now();
+          // Throttle updates to prevent too frequent chart updates
+          if (now - lastUpdateTime > 2000) { // 2 second throttle
+            updateLatestReading(result.data);
+            lastUpdateTime = now;
+          }
         }
       })
       .catch(error => {
-        console.error('Error fetching MQTT status:', error);
+        console.error('Error checking for new data:', error);
       });
   }
   
@@ -105,11 +156,12 @@ document.addEventListener('DOMContentLoaded', function() {
           updateChartWithOptimizedData(data.history);
         }
         
-        // Update MQTT status
-        if (data.mqtt) {
-          mqttStatus = data.mqtt;
-          updateMQTTStatusDisplay();
-        }
+        // Update connection status (replaces MQTT status)
+        connectionStatus = { 
+          connected: true, 
+          lastPoll: new Date().toISOString() 
+        };
+        updateStatusDisplay();
         
         // Update statistics
         if (data.stats) {
@@ -125,7 +177,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Fallback: load data separately
         loadHistoryData();
-        updateMQTTStatus();
+        updateConnectionStatus();
       });
   }
   
@@ -179,18 +231,10 @@ document.addEventListener('DOMContentLoaded', function() {
     container.innerHTML = html;
   }
   
-  // Update MQTT status display
+  // This function is now replaced by updateStatusDisplay() defined earlier
+  // Keeping this for backwards compatibility, but it just calls the new function
   function updateMQTTStatusDisplay() {
-    const statusElement = document.getElementById('mqtt-status');
-    if (statusElement) {
-      statusElement.innerHTML = `
-        <div class="mqtt-status ${mqttStatus.connected ? 'connected' : 'disconnected'}">
-          <span class="status-indicator ${mqttStatus.connected ? 'online' : 'offline'}"></span>
-          MQTT: ${mqttStatus.connected ? 'Connected' : 'Disconnected'}
-          <span class="retain-count">(${mqttStatus.retainMessagesCount} retained)</span>
-        </div>
-      `;
-    }
+    updateStatusDisplay();
   }
   
   // Recovery function for MQTT data
@@ -1390,5 +1434,78 @@ document.addEventListener('DOMContentLoaded', function() {
       fullscreenChart.update('none');
     }
   }
+  
+  // Update latest reading (for HTTP polling)
+  function updateLatestReading(newReading) {
+    if (!newReading) return;
+    
+    // Update the latest reading display
+    const tempElement = document.querySelector('.temp-value');
+    const humElement = document.querySelector('.humidity-value');
+    const timestampElement = document.querySelector('.last-update');
+    
+    if (tempElement) tempElement.textContent = `${newReading.temperature}°C`;
+    if (humElement) humElement.textContent = `${newReading.humidity}%`;
+    if (timestampElement) {
+      const updateTime = new Date(newReading.timestamp).toLocaleString();
+      timestampElement.textContent = `Last update: ${updateTime}`;
+    }
+    
+    // Add to chart if chart exists and we have valid data
+    if (chart && chart.data && chart.data.datasets && chart.data.datasets.length > 0) {
+      const timestamp = new Date(newReading.timestamp);
+      
+      // Only add if this is newer than the last data point
+      const lastIndex = chart.data.labels.length - 1;
+      if (lastIndex < 0 || new Date(chart.data.labels[lastIndex]) < timestamp) {
+        // Add new data point
+        chart.data.labels.push(timestamp);
+        chart.data.datasets[0].data.push(newReading.temperature);
+        chart.data.datasets[1].data.push(newReading.humidity);
+        
+        // Keep only last 100 points for performance
+        if (chart.data.labels.length > 100) {
+          chart.data.labels.shift();
+          chart.data.datasets[0].data.shift();
+          chart.data.datasets[1].data.shift();
+        }
+        
+        chart.update('none'); // Update without animation for better performance
+      }
+    }
+    
+    console.log('📊 Updated latest reading:', newReading);
+  }
+  
+  // Cleanup function for when page unloads
+  window.addEventListener('beforeunload', () => {
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      console.log('🧹 Cleaned up polling interval');
+    }
+  });
 
+  // Pause/resume polling when page visibility changes
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      // Page is now hidden, reduce polling frequency
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = setInterval(() => {
+          updateConnectionStatus();
+        }, 30000); // 30 seconds when hidden
+      }
+    } else {
+      // Page is now visible, restore normal polling
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = setInterval(() => {
+          updateConnectionStatus();
+          if (!isLoadingData) {
+            checkForNewData();
+          }
+        }, pollingFrequency);
+      }
+    }
+  });
 });
