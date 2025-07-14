@@ -29,14 +29,5 @@
       "maxDuration": 30,
       "memory": 1024
     }
-  },
-  "env": {
-    "NODE_ENV": "production"
-  },
-  "crons": [
-    {
-      "path": "/api/mqtt/recover",
-      "schedule": "0 */6 * * *"
-    }
-  ]
+  }
 }

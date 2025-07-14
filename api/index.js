@@ -4,7 +4,6 @@ const path = require('path');
 require('dotenv').config();
 
 // Import services
-const mqttService = require('../lib/mqtt-service');
 const dbAccess = require('../database-access');
 
 const app = express();
@@ -17,23 +16,43 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '../views'));
 
-// Initialize MQTT service (hanya sekali saat cold start)
-let mqttInitialized = false;
+// Conditional MQTT service untuk serverless
+let mqttService = null;
 
-async function initializeMQTT() {
-  if (!mqttInitialized) {
+// Safely initialize MQTT if available
+async function initializeMQTTSafe() {
+  if (!mqttService) {
     try {
-      await mqttService.initialize();
-      mqttInitialized = true;
-      console.log('MQTT service initialized successfully');
+      // Only load MQTT in non-serverless environments
+      if (process.env.VERCEL !== '1' && process.env.NODE_ENV !== 'production') {
+        const mqttServiceModule = require('../lib/mqtt-service');
+        await mqttServiceModule.initialize();
+        mqttService = mqttServiceModule;
+        console.log('MQTT service initialized for development');
+      } else {
+        // Serverless fallback
+        mqttService = {
+          isConnected: false,
+          getRetainMessages: () => [],
+          getMessageLogs: () => Promise.resolve([]),
+          publishRetainMessage: () => Promise.resolve(),
+          recoverRetainMessages: () => Promise.resolve()
+        };
+        console.log('MQTT service running in serverless mode');
+      }
     } catch (error) {
-      console.error('Failed to initialize MQTT service:', error);
+      console.log('MQTT service unavailable, using database fallback');
+      mqttService = {
+        isConnected: false,
+        getRetainMessages: () => [],
+        getMessageLogs: () => Promise.resolve([]),
+        publishRetainMessage: () => Promise.resolve(),
+        recoverRetainMessages: () => Promise.resolve()
+      };
     }
   }
+  return mqttService;
 }
-
-// Initialize MQTT pada startup
-initializeMQTT();
 
 // Route utama
 app.get('/', (req, res) => {
@@ -101,34 +120,7 @@ app.get('/api/stats', async (req, res) => {
 // API endpoint untuk latest sensor data
 app.get('/api/latest', async (req, res) => {
   try {
-    // Pastikan MQTT service diinisialisasi
-    await initializeMQTT();
-    
-    // Ambil dari retain messages terlebih dahulu
-    const retainMessages = mqttService.getRetainMessages();
-    const sensorRetainMessage = retainMessages.find(msg => 
-      msg.topic.includes('data') || msg.topic === 'sht20/data'
-    );
-    
-    if (sensorRetainMessage) {
-      try {
-        const data = JSON.parse(sensorRetainMessage.message);
-        if (data.temp !== undefined && data.hum !== undefined) {
-          res.json({
-            temperature: data.temp,
-            humidity: data.hum,
-            timestamp: sensorRetainMessage.timestamp,
-            source: 'retain_message',
-            deviceId: sensorRetainMessage.deviceId
-          });
-          return;
-        }
-      } catch (parseError) {
-        console.log('Error parsing retain message');
-      }
-    }
-    
-    // Fallback ke database
+    // Dalam serverless environment, prioritaskan database
     const latestReading = await dbAccess.getReadings({ limit: 1 });
     if (latestReading.length > 0) {
       res.json({
@@ -149,73 +141,57 @@ app.get('/api/latest', async (req, res) => {
   }
 });
 
-// NEW: API endpoint untuk MQTT message logs
+// Simplified MQTT endpoints untuk serverless
 app.get('/api/mqtt/logs', async (req, res) => {
   try {
-    await initializeMQTT();
-    
-    const {
-      limit = 100,
-      offset = 0,
-      topic,
-      deviceId,
-      startDate,
-      endDate,
-      messageType
-    } = req.query;
-    
-    const logs = await mqttService.getMessageLogs({
-      limit: parseInt(limit),
-      offset: parseInt(offset),
-      topic,
-      deviceId,
-      startDate,
-      endDate,
-      messageType
+    const service = await initializeMQTTSafe();
+    const logs = await service.getMessageLogs({
+      limit: parseInt(req.query.limit || 100),
+      offset: parseInt(req.query.offset || 0)
     });
     
     res.json({
       logs,
       pagination: {
-        limit: parseInt(limit),
-        offset: parseInt(offset)
+        limit: parseInt(req.query.limit || 100),
+        offset: parseInt(req.query.offset || 0)
       }
     });
   } catch (error) {
     console.error('Error in /api/mqtt/logs:', error);
-    res.status(500).json({ error: 'Failed to fetch MQTT logs', details: error.message });
+    res.status(500).json({ error: 'MQTT logs unavailable', details: error.message });
   }
 });
 
-// NEW: API endpoint untuk retain messages
 app.get('/api/mqtt/retain', async (req, res) => {
   try {
-    await initializeMQTT();
-    
-    const retainMessages = mqttService.getRetainMessages();
+    const service = await initializeMQTTSafe();
+    const retainMessages = service.getRetainMessages();
     res.json(retainMessages);
   } catch (error) {
     console.error('Error in /api/mqtt/retain:', error);
-    res.status(500).json({ error: 'Failed to fetch retain messages', details: error.message });
+    res.status(500).json({ error: 'Retain messages unavailable', details: error.message });
   }
 });
 
-// NEW: API endpoint untuk publish retain message
 app.post('/api/mqtt/publish', async (req, res) => {
   try {
-    await initializeMQTT();
-    
+    const service = await initializeMQTTSafe();
     const { topic, message, qos = 1 } = req.body;
     
     if (!topic || !message) {
       return res.status(400).json({ error: 'Topic and message are required' });
     }
     
-    await mqttService.publishRetainMessage(topic, JSON.stringify(message), { qos });
+    if (!service.isConnected) {
+      return res.status(503).json({ error: 'MQTT service not available in serverless environment' });
+    }
+    
+    await service.publishRetainMessage(topic, JSON.stringify(message), { qos });
     
     res.json({ 
       success: true, 
-      message: 'Retain message published successfully',
+      message: 'Message published successfully',
       topic,
       qos
     });
@@ -225,17 +201,14 @@ app.post('/api/mqtt/publish', async (req, res) => {
   }
 });
 
-// NEW: API endpoint untuk recover/sync data
 app.post('/api/mqtt/recover', async (req, res) => {
   try {
-    await initializeMQTT();
-    
-    // Force recovery of retain messages
-    await mqttService.recoverRetainMessages();
+    const service = await initializeMQTTSafe();
+    await service.recoverRetainMessages();
     
     res.json({ 
       success: true, 
-      message: 'Data recovery completed successfully' 
+      message: 'Recovery completed' 
     });
   } catch (error) {
     console.error('Error in /api/mqtt/recover:', error);
@@ -243,14 +216,15 @@ app.post('/api/mqtt/recover', async (req, res) => {
   }
 });
 
-// NEW: API endpoint untuk MQTT service status
 app.get('/api/mqtt/status', async (req, res) => {
   try {
+    const service = await initializeMQTTSafe();
     const status = {
-      initialized: mqttInitialized,
-      connected: mqttService.isConnected,
-      retainMessagesCount: mqttService.getRetainMessages().length,
-      timestamp: new Date().toISOString()
+      initialized: service !== null,
+      connected: service.isConnected,
+      retainMessagesCount: service.getRetainMessages().length,
+      timestamp: new Date().toISOString(),
+      environment: process.env.VERCEL === '1' ? 'serverless' : 'development'
     };
     
     res.json(status);
@@ -260,23 +234,23 @@ app.get('/api/mqtt/status', async (req, res) => {
   }
 });
 
-// NEW: Combined endpoint untuk dashboard data (optimized)
+// Optimized dashboard endpoint untuk serverless
 app.get('/api/dashboard', async (req, res) => {
   try {
-    await initializeMQTT();
+    const service = await initializeMQTTSafe();
     
     // Parallel requests untuk performa
-    const [latestReading, recentReadings, retainMessages, stats] = await Promise.all([
+    const [latestReading, recentReadings, stats] = await Promise.all([
       dbAccess.getReadings({ limit: 1 }),
       dbAccess.getReadings({ limit: 24, days: 1 }),
-      Promise.resolve(mqttService.getRetainMessages()),
       dbAccess.getStatistics(1)
     ]);
     
-    // Prioritize retain message untuk data terkini
+    // Try to get current data from MQTT retain messages first
     let currentData = null;
+    const retainMessages = service.getRetainMessages();
     const sensorRetainMessage = retainMessages.find(msg => 
-      msg.topic.includes('data') || msg.topic === 'sht20/data'
+      msg.topic && (msg.topic.includes('data') || msg.topic === 'sht20/data')
     );
     
     if (sensorRetainMessage) {
@@ -292,11 +266,11 @@ app.get('/api/dashboard', async (req, res) => {
           };
         }
       } catch (parseError) {
-        console.log('Error parsing retain message');
+        console.log('Error parsing retain message:', parseError.message);
       }
     }
     
-    // Fallback ke database untuk current data
+    // Fallback to database for current data
     if (!currentData && latestReading.length > 0) {
       currentData = {
         ...latestReading[0],
@@ -320,7 +294,8 @@ app.get('/api/dashboard', async (req, res) => {
       stats: stats,
       mqtt: {
         retainMessagesCount: retainMessages.length,
-        connected: mqttService.isConnected
+        connected: service.isConnected,
+        environment: process.env.VERCEL === '1' ? 'serverless' : 'development'
       }
     });
   } catch (error) {
@@ -335,11 +310,13 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error', details: err.message });
 });
 
-// Graceful shutdown untuk Vercel
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-  await mqttService.disconnect();
-  await dbAccess.disconnect();
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    environment: 'serverless'
+  });
 });
 
 module.exports = app;
