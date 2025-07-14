@@ -25,6 +25,10 @@ document.addEventListener('DOMContentLoaded', function() {
   let fullscreenChart = null; // Fullscreen chart instance
   let isFullscreenMode = false;
   
+  // MQTT variables
+  let mqttStatus = { connected: false, retainMessagesCount: 0 };
+  let retainMessages = [];
+  
   // Initialize chart after a small delay to ensure DOM is ready
   setTimeout(() => {
     console.log('🎯 Attempting to initialize chart...');
@@ -32,35 +36,197 @@ document.addEventListener('DOMContentLoaded', function() {
     setupFullscreenFunctionality();
     // Load initial data only after chart is initialized
     if (chart) {
-      console.log('✅ Chart initialized successfully, loading initial history data...');
-      loadHistoryData();
+      console.log('✅ Chart initialized successfully, loading initial data...');
+      loadDashboardData();
     } else {
       console.error('❌ Chart initialization failed');
     }
   }, 500);
   
-  // Fallback: If chart is not ready after 2 seconds, try to load data anyway
-  setTimeout(() => {
-    if (!chart) {
-      console.warn('⚠️  Chart not initialized after 2 seconds, trying to load data anyway...');
-      loadHistoryData();
-      
-      // Try to initialize chart again
-      setTimeout(() => {
-        if (!chart) {
-          console.log('🔄 Retrying chart initialization...');
-          chart = initializeChart();
-          if (chart && window.pendingChartData) {
-            console.log('📊 Loading pending chart data...');
-            updateChartWithOptimizedData(window.pendingChartData);
-            window.pendingChartData = null;
+  // MQTT Status update functions
+  function updateMQTTStatus() {
+    fetch('/api/mqtt/status')
+      .then(response => response.json())
+      .then(status => {
+        mqttStatus = status;
+        const statusElement = document.getElementById('mqtt-status');
+        if (statusElement) {
+          statusElement.innerHTML = `
+            <div class="mqtt-status ${status.connected ? 'connected' : 'disconnected'}">
+              <span class="status-indicator ${status.connected ? 'online' : 'offline'}"></span>
+              MQTT: ${status.connected ? 'Connected' : 'Disconnected'}
+              <span class="retain-count">(${status.retainMessagesCount} retained)</span>
+            </div>
+          `;
+        }
+      })
+      .catch(error => {
+        console.error('Error fetching MQTT status:', error);
+      });
+  }
+  
+  // Load dashboard data (combines latest + history + MQTT data)
+  function loadDashboardData() {
+    if (isLoadingData) {
+      console.log('⏳ Data loading already in progress, skipping...');
+      return;
+    }
+    
+    isLoadingData = true;
+    console.log('🔄 Loading dashboard data...');
+    
+    fetch('/api/dashboard')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        console.log('📊 Dashboard data received:', data);
+        
+        // Update current sensor data
+        if (data.current) {
+          updateSensorDisplay(data.current.temperature, data.current.humidity);
+          
+          // Show data source indicator
+          const sourceElement = document.getElementById('data-source');
+          if (sourceElement) {
+            const sourceText = data.current.source === 'retain_message' ? 'MQTT Retain' : 
+                             data.current.source === 'database' ? 'Database' : 'Default';
+            sourceElement.textContent = `Source: ${sourceText}`;
+            sourceElement.className = `data-source ${data.current.source}`;
           }
         }
-      }, 1000);
-    } else {
-      console.log('✅ Chart is ready and functioning');
+        
+        // Update chart with history
+        if (data.history && chart) {
+          allHistoryData = data.history;
+          updateChartWithOptimizedData(data.history);
+        }
+        
+        // Update MQTT status
+        if (data.mqtt) {
+          mqttStatus = data.mqtt;
+          updateMQTTStatusDisplay();
+        }
+        
+        // Update statistics
+        if (data.stats) {
+          updateStatistics(data.stats);
+        }
+        
+        isLoadingData = false;
+        console.log('✅ Dashboard data loaded successfully');
+      })
+      .catch(error => {
+        console.error('❌ Error loading dashboard data:', error);
+        isLoadingData = false;
+        
+        // Fallback: load data separately
+        loadHistoryData();
+        updateMQTTStatus();
+      });
+  }
+  
+  // Load MQTT retain messages
+  function loadRetainMessages() {
+    fetch('/api/mqtt/retain')
+      .then(response => response.json())
+      .then(messages => {
+        retainMessages = messages;
+        displayRetainMessages(messages);
+        console.log('📨 Retain messages loaded:', messages.length);
+      })
+      .catch(error => {
+        console.error('Error loading retain messages:', error);
+      });
+  }
+  
+  // Display retain messages in UI
+  function displayRetainMessages(messages) {
+    const container = document.getElementById('retain-messages-container');
+    if (!container) return;
+    
+    if (messages.length === 0) {
+      container.innerHTML = '<p class="no-data">No retain messages available</p>';
+      return;
     }
-  }, 2000);
+    
+    const html = messages.map(msg => {
+      let parsedMessage = msg.message;
+      try {
+        const parsed = JSON.parse(msg.message);
+        if (parsed.temp !== undefined && parsed.hum !== undefined) {
+          parsedMessage = `Temp: ${parsed.temp}°C, Humidity: ${parsed.hum}%`;
+        }
+      } catch (e) {
+        // Keep original message if not JSON
+      }
+      
+      return `
+        <div class="retain-message-item">
+          <div class="message-header">
+            <span class="topic">${msg.topic}</span>
+            <span class="timestamp">${new Date(msg.timestamp).toLocaleString()}</span>
+          </div>
+          <div class="message-content">${parsedMessage}</div>
+          ${msg.deviceId ? `<div class="device-id">Device: ${msg.deviceId}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+    
+    container.innerHTML = html;
+  }
+  
+  // Update MQTT status display
+  function updateMQTTStatusDisplay() {
+    const statusElement = document.getElementById('mqtt-status');
+    if (statusElement) {
+      statusElement.innerHTML = `
+        <div class="mqtt-status ${mqttStatus.connected ? 'connected' : 'disconnected'}">
+          <span class="status-indicator ${mqttStatus.connected ? 'online' : 'offline'}"></span>
+          MQTT: ${mqttStatus.connected ? 'Connected' : 'Disconnected'}
+          <span class="retain-count">(${mqttStatus.retainMessagesCount} retained)</span>
+        </div>
+      `;
+    }
+  }
+  
+  // Recovery function for MQTT data
+  function recoverMQTTData() {
+    const recoverBtn = document.getElementById('recover-btn');
+    if (recoverBtn) {
+      recoverBtn.textContent = 'Recovering...';
+      recoverBtn.disabled = true;
+    }
+    
+    fetch('/api/mqtt/recover', { method: 'POST' })
+      .then(response => response.json())
+      .then(result => {
+        if (result.success) {
+          console.log('✅ MQTT data recovery completed');
+          // Refresh dashboard data
+          loadDashboardData();
+          loadRetainMessages();
+        } else {
+          console.error('❌ MQTT recovery failed:', result.error);
+        }
+      })
+      .catch(error => {
+        console.error('❌ Error during MQTT recovery:', error);
+      })
+      .finally(() => {
+        if (recoverBtn) {
+          recoverBtn.textContent = 'Recover Data';
+          recoverBtn.disabled = false;
+        }
+      });
+  }
+  
+  // Expose functions to global scope for buttons
+  window.recoverMQTTData = recoverMQTTData;
+  window.loadRetainMessages = loadRetainMessages;
   
   // Update waktu
   function updateTime() {

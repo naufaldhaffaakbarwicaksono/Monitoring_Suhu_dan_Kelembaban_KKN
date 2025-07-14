@@ -3,15 +3,16 @@ const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 const path = require('path');
-const mqtt = require('mqtt');
 require('dotenv').config();
 const prisma = require('./lib/prisma');
 const dbAccess = require('./database-access');
+const mqttService = require('./lib/mqtt-service');
 
 // Setup EJS dan static files
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json());
 
 // Route utama
 app.get('/', (req, res) => {
@@ -75,14 +76,46 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
-// API endpoint for latest sensor data (alternative to Socket.IO)
+// API endpoint for latest sensor data with MQTT retain support
 app.get('/api/latest', async (req, res) => {
   try {
+    // Prioritas: 1. Retain message, 2. Database
+    const retainMessages = mqttService.getRetainMessages();
+    const sensorRetainMessage = retainMessages.find(msg => 
+      msg.topic.includes('data') || msg.topic === 'sht20/data'
+    );
+    
+    if (sensorRetainMessage) {
+      try {
+        const data = JSON.parse(sensorRetainMessage.message);
+        if (data.temp !== undefined && data.hum !== undefined) {
+          return res.json({
+            temperature: data.temp,
+            humidity: data.hum,
+            timestamp: sensorRetainMessage.timestamp,
+            source: 'retain_message',
+            deviceId: sensorRetainMessage.deviceId
+          });
+        }
+      } catch (parseError) {
+        console.log('Error parsing retain message');
+      }
+    }
+    
+    // Fallback ke database
     const latestReading = await dbAccess.getReadings({ limit: 1 });
     if (latestReading.length > 0) {
-      res.json(latestReading[0]);
+      res.json({
+        ...latestReading[0],
+        source: 'database'
+      });
     } else {
-      res.json({ temperature: 0, humidity: 0, timestamp: new Date().toISOString() });
+      res.json({ 
+        temperature: 0, 
+        humidity: 0, 
+        timestamp: new Date().toISOString(),
+        source: 'default'
+      });
     }
   } catch (error) {
     console.error('Error in /api/latest:', error);
@@ -90,123 +123,235 @@ app.get('/api/latest', async (req, res) => {
   }
 });
 
-// Data structure
+// MQTT API endpoints
+app.get('/api/mqtt/logs', async (req, res) => {
+  try {
+    const {
+      limit = 100,
+      offset = 0,
+      topic,
+      deviceId,
+      startDate,
+      endDate,
+      messageType
+    } = req.query;
+    
+    const logs = await mqttService.getMessageLogs({
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      topic,
+      deviceId,
+      startDate,
+      endDate,
+      messageType
+    });
+    
+    res.json({
+      logs,
+      pagination: {
+        limit: parseInt(limit),
+        offset: parseInt(offset)
+      }
+    });
+  } catch (error) {
+    console.error('Error in /api/mqtt/logs:', error);
+    res.status(500).json({ error: 'Failed to fetch MQTT logs', details: error.message });
+  }
+});
+
+app.get('/api/mqtt/retain', async (req, res) => {
+  try {
+    const retainMessages = mqttService.getRetainMessages();
+    res.json(retainMessages);
+  } catch (error) {
+    console.error('Error in /api/mqtt/retain:', error);
+    res.status(500).json({ error: 'Failed to fetch retain messages', details: error.message });
+  }
+});
+
+app.post('/api/mqtt/publish', async (req, res) => {
+  try {
+    const { topic, message, qos = 1 } = req.body;
+    
+    if (!topic || !message) {
+      return res.status(400).json({ error: 'Topic and message are required' });
+    }
+    
+    await mqttService.publishRetainMessage(topic, JSON.stringify(message), { qos });
+    
+    res.json({ 
+      success: true, 
+      message: 'Retain message published successfully',
+      topic,
+      qos
+    });
+  } catch (error) {
+    console.error('Error in /api/mqtt/publish:', error);
+    res.status(500).json({ error: 'Failed to publish message', details: error.message });
+  }
+});
+
+app.post('/api/mqtt/recover', async (req, res) => {
+  try {
+    await mqttService.recoverRetainMessages();
+    
+    res.json({ 
+      success: true, 
+      message: 'Data recovery completed successfully' 
+    });
+  } catch (error) {
+    console.error('Error in /api/mqtt/recover:', error);
+    res.status(500).json({ error: 'Failed to recover data', details: error.message });
+  }
+});
+
+app.get('/api/mqtt/status', async (req, res) => {
+  try {
+    const status = {
+      connected: mqttService.isConnected,
+      retainMessagesCount: mqttService.getRetainMessages().length,
+      timestamp: new Date().toISOString()
+    };
+    
+    res.json(status);
+  } catch (error) {
+    console.error('Error in /api/mqtt/status:', error);
+    res.status(500).json({ error: 'Failed to get MQTT status', details: error.message });
+  }
+});
+
+// Dashboard API dengan data kombinasi retain + database
+app.get('/api/dashboard', async (req, res) => {
+  try {
+    const [latestReading, recentReadings, retainMessages, stats] = await Promise.all([
+      dbAccess.getReadings({ limit: 1 }),
+      dbAccess.getReadings({ limit: 24, days: 1 }),
+      Promise.resolve(mqttService.getRetainMessages()),
+      dbAccess.getStatistics(1)
+    ]);
+    
+    // Prioritize retain message untuk data terkini
+    let currentData = null;
+    const sensorRetainMessage = retainMessages.find(msg => 
+      msg.topic.includes('data') || msg.topic === 'sht20/data'
+    );
+    
+    if (sensorRetainMessage) {
+      try {
+        const data = JSON.parse(sensorRetainMessage.message);
+        if (data.temp !== undefined && data.hum !== undefined) {
+          currentData = {
+            temperature: data.temp,
+            humidity: data.hum,
+            timestamp: sensorRetainMessage.timestamp,
+            source: 'retain_message',
+            deviceId: sensorRetainMessage.deviceId
+          };
+        }
+      } catch (parseError) {
+        console.log('Error parsing retain message');
+      }
+    }
+    
+    if (!currentData && latestReading.length > 0) {
+      currentData = {
+        ...latestReading[0],
+        source: 'database'
+      };
+    }
+    
+    res.json({
+      current: currentData || { 
+        temperature: 0, 
+        humidity: 0, 
+        timestamp: new Date().toISOString(),
+        source: 'default'
+      },
+      history: recentReadings.map(reading => ({
+        time: reading.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+        temperature: reading.temperature,
+        humidity: reading.humidity,
+        timestamp: reading.timestamp
+      })),
+      stats: stats,
+      mqtt: {
+        retainMessagesCount: retainMessages.length,
+        connected: mqttService.isConnected
+      }
+    });
+  } catch (error) {
+    console.error('Error in /api/dashboard:', error);
+    res.status(500).json({ error: 'Failed to fetch dashboard data', details: error.message });
+  }
+});
+
+// Data structure untuk backward compatibility
 let sensorData = {
   temperature: 0,
   humidity: 0,
   history: []
 };
 
-// MQTT Configuration
-// Expected message format: {"temp":23.54,"hum":71.93,"timestamp":"2025-07-13T17:09:02"}
-const mqttOptions = {
-  host: process.env.MQTT_HOST,
-  port: parseInt(process.env.MQTT_PORT),
-  protocol: 'mqtts',
-  username: process.env.MQTT_USERNAME,
-  password: process.env.MQTT_PASSWORD
-};
+// Initialize MQTT service
+let mqttInitialized = false;
 
-// Connect to MQTT broker
-const client = mqtt.connect(mqttOptions);
-
-client.on('connect', () => {
-  console.log('Connected to MQTT broker');
-  client.subscribe('sht20/data', (err) => {
-    if (err) {
-      console.error('Subscription error:', err);
-    }
-  });
-});
-
-client.on('message', async (topic, message) => {
-  if (topic === 'sht20/data') {
+async function initializeMQTT() {
+  if (!mqttInitialized) {
     try {
-      const data = JSON.parse(message.toString());
-      
-      // Validate required fields for new format: {"temp":23.54,"hum":71.93,"timestamp":"2025-07-13T17:09:02"}
-      if (typeof data.temp !== 'number' || typeof data.hum !== 'number') {
-        console.error('Invalid MQTT message format. Expected temp and hum as numbers:', data);
-        return;
-      }
-      
-      // Create comprehensive timestamp
-      const receivedAt = new Date();
-      const timestamp = data.timestamp ? new Date(data.timestamp) : receivedAt;
-      
-      console.log('MQTT Data received:', {
-        topic,
-        data,
-        receivedAt: receivedAt.toISOString(),
-        dataTimestamp: data.timestamp || 'No timestamp from device',
-        usedTimestamp: timestamp.toISOString()
-      });
-      
-      // Save to database with proper timestamp
-      const savedReading = await dbAccess.createReading({
-        temperature: data.temp,
-        humidity: data.hum,
-        timestamp: timestamp,  // Timestamp dari device atau received time
-        receivedAt: receivedAt,  // Kapan server menerima data
-        location: data.location || 'Default Room',
-        deviceId: data.deviceId || 'SHT20-001'  // Simplified device ID handling
-      });
-      
-      console.log('Data saved to DB:', {
-        id: savedReading.id,
-        timestamp: savedReading.timestamp.toISOString(),
-        temperature: savedReading.temperature,
-        humidity: savedReading.humidity
-      });
-      
-      // Update current data
-      sensorData.temperature = data.temp;
-      sensorData.humidity = data.hum;
-      sensorData.timestamp = timestamp;
-      sensorData.receivedAt = receivedAt;
-      sensorData.deviceId = data.deviceId || 'SHT20-001';  // Simplified device ID handling
-      
-      // Get recent history from database (last 24 entries)
-      const recentReadings = await dbAccess.getRecentReadings(24);
-      
-      sensorData.history = recentReadings.map(reading => ({
-        time: reading.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-        temperature: reading.temperature,
-        humidity: reading.humidity
-      }));
-      
-      // Send update to all connected clients
-      io.emit('update', sensorData);
-    } catch (err) {
-      console.error('Error parsing MQTT message or saving to database:', err);
+      await mqttService.initialize();
+      mqttInitialized = true;
+      console.log('MQTT service initialized successfully');
+    } catch (error) {
+      console.error('Failed to initialize MQTT service:', error);
     }
   }
-});
+}
 
-client.on('error', (err) => {
-  console.error('MQTT error:', err);
-});
-
-// Socket.io connection
+// Socket.io connection dengan MQTT retain support
 io.on('connection', async (socket) => {
   console.log('Client connected');
   
   try {
+    // Ensure MQTT is initialized
+    await initializeMQTT();
+    
     // Test database connection
     const dbConnected = await dbAccess.testConnection();
     if (!dbConnected) {
       console.error('Database connection failed on startup');
     }
     
-    // Get latest reading from database
-    const latestReading = await dbAccess.getLatestReading();
+    // Get data dari retain messages terlebih dahulu
+    const retainMessages = mqttService.getRetainMessages();
+    const sensorRetainMessage = retainMessages.find(msg => 
+      msg.topic.includes('data') || msg.topic === 'sht20/data'
+    );
     
-    if (latestReading) {
-      sensorData.temperature = latestReading.temperature;
-      sensorData.humidity = latestReading.humidity;
-      sensorData.timestamp = latestReading.timestamp;
-      sensorData.receivedAt = latestReading.receivedAt;
-      sensorData.deviceId = latestReading.deviceId;
+    if (sensorRetainMessage) {
+      try {
+        const data = JSON.parse(sensorRetainMessage.message);
+        if (data.temp !== undefined && data.hum !== undefined) {
+          sensorData.temperature = data.temp;
+          sensorData.humidity = data.hum;
+          sensorData.timestamp = sensorRetainMessage.timestamp;
+          sensorData.deviceId = sensorRetainMessage.deviceId;
+        }
+      } catch (parseError) {
+        console.log('Error parsing retain message, falling back to database');
+      }
+    }
+    
+    // Fallback ke database jika tidak ada retain message
+    if (!sensorRetainMessage || sensorData.temperature === 0) {
+      const latestReading = await dbAccess.getLatestReading();
+      
+      if (latestReading) {
+        sensorData.temperature = latestReading.temperature;
+        sensorData.humidity = latestReading.humidity;
+        sensorData.timestamp = latestReading.timestamp;
+        sensorData.receivedAt = latestReading.receivedAt;
+        sensorData.deviceId = latestReading.deviceId;
+      }
     }
     
     // Get recent history from database
@@ -221,12 +366,22 @@ io.on('connection', async (socket) => {
     // Send initial data
     socket.emit('update', sensorData);
   } catch (err) {
-    console.error('Error fetching data from database:', err);
+    console.error('Error fetching data:', err);
     socket.emit('update', sensorData);
   }
   
   socket.on('disconnect', () => {
     console.log('Client disconnected');
+  });
+  
+  // Handle manual data refresh request
+  socket.on('refresh', async () => {
+    try {
+      await mqttService.recoverRetainMessages();
+      socket.emit('refreshComplete', { success: true });
+    } catch (error) {
+      socket.emit('refreshComplete', { success: false, error: error.message });
+    }
   });
 });
 
@@ -236,13 +391,21 @@ module.exports = app;
 // Start server (only in non-production environment)
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 3000;
-  http.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  
+  // Initialize MQTT before starting server
+  initializeMQTT().then(() => {
+    http.listen(PORT, () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }).catch(error => {
+    console.error('Failed to start server:', error);
+    process.exit(1);
   });
 
   // Graceful shutdown
   process.on('SIGINT', async () => {
     console.log('Shutting down gracefully...');
+    await mqttService.disconnect();
     await dbAccess.disconnect();
     process.exit(0);
   });

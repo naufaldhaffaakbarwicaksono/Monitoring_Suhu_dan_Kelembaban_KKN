@@ -47,6 +47,32 @@
         </div>
       </div>
       
+      <!-- MQTT Status and Controls -->
+      <div class="mqtt-status-card">
+        <div class="mqtt-header">
+          <h3>MQTT Serverless Status</h3>
+          <div id="mqtt-status" class="mqtt-status-indicator">
+            <div class="mqtt-status disconnected">
+              <span class="status-indicator offline"></span>
+              MQTT: Connecting...
+              <span class="retain-count">(0 retained)</span>
+            </div>
+          </div>
+        </div>
+        <div class="mqtt-controls">
+          <div id="data-source" class="data-source unknown">Source: Loading...</div>
+          <button id="recover-btn" onclick="recoverMQTTData()" class="mqtt-btn recover-btn">
+            🔄 Recover Data
+          </button>
+          <button onclick="loadRetainMessages()" class="mqtt-btn">
+            📨 Load Retain Messages
+          </button>
+        </div>
+        <div class="retain-messages" id="retain-messages-container">
+          <p class="loading">Loading retain messages...</p>
+        </div>
+      </div>
+      
       <!-- Chart Card with Timestamp -->
       <div class="chart-card">
         <div class="chart-header">

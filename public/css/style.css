@@ -935,3 +935,242 @@ tr:hover {
     gap: 5px;
   }
 }
+
+/* MQTT Status and Controls Styling */
+.mqtt-status-card {
+  background: white;
+  border-radius: 15px;
+  padding: 25px;
+  margin-bottom: 25px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border-color);
+}
+
+.mqtt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+.mqtt-header h3 {
+  color: var(--dark);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.mqtt-status-indicator .mqtt-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 15px;
+  border-radius: 25px;
+  font-weight: 500;
+  font-size: 0.9rem;
+  transition: all 0.3s ease;
+}
+
+.mqtt-status.connected {
+  background: rgba(44, 201, 240, 0.1);
+  color: var(--success-color);
+  border: 1px solid rgba(44, 201, 240, 0.3);
+}
+
+.mqtt-status.disconnected {
+  background: rgba(255, 77, 77, 0.1);
+  color: var(--danger-color);
+  border: 1px solid rgba(255, 77, 77, 0.3);
+}
+
+.status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  animation: pulse 2s infinite;
+}
+
+.status-indicator.online {
+  background: var(--success-color);
+}
+
+.status-indicator.offline {
+  background: var(--danger-color);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.retain-count {
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+.mqtt-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.data-source {
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+
+.data-source.retain_message {
+  background: rgba(67, 97, 238, 0.1);
+  color: var(--primary);
+  border-color: rgba(67, 97, 238, 0.3);
+}
+
+.data-source.database {
+  background: rgba(247, 127, 0, 0.1);
+  color: var(--warning);
+  border-color: rgba(247, 127, 0, 0.3);
+}
+
+.data-source.default,
+.data-source.unknown {
+  background: rgba(173, 181, 189, 0.1);
+  color: var(--gray);
+  border-color: rgba(173, 181, 189, 0.3);
+}
+
+.mqtt-btn {
+  background: var(--primary);
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.9rem;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mqtt-btn:hover {
+  background: var(--primary-light);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(67, 97, 238, 0.3);
+}
+
+.mqtt-btn:disabled {
+  background: var(--gray);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.mqtt-btn.recover-btn {
+  background: var(--success-color);
+}
+
+.mqtt-btn.recover-btn:hover {
+  background: #25a851;
+}
+
+.retain-messages {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--surface-color);
+}
+
+.retain-message-item {
+  padding: 15px;
+  border-bottom: 1px solid var(--border-color);
+  background: white;
+  transition: background-color 0.2s ease;
+}
+
+.retain-message-item:hover {
+  background: rgba(67, 97, 238, 0.02);
+}
+
+.retain-message-item:last-child {
+  border-bottom: none;
+}
+
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.message-header .topic {
+  font-weight: 600;
+  color: var(--primary);
+  font-size: 0.9rem;
+}
+
+.message-header .timestamp {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.message-content {
+  font-size: 0.9rem;
+  color: var(--text-color);
+  padding: 8px 12px;
+  background: var(--surface-color);
+  border-radius: 6px;
+  border-left: 3px solid var(--primary);
+  margin-bottom: 8px;
+}
+
+.device-id {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.no-data, .loading {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 20px;
+  font-style: italic;
+}
+
+/* Responsive Design for MQTT Components */
+@media (max-width: 768px) {
+  .mqtt-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .mqtt-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .mqtt-btn {
+    justify-content: center;
+  }
+  
+  .message-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 5px;
+  }
+  
+  .retain-messages {
+    max-height: 200px;
+  }
+}

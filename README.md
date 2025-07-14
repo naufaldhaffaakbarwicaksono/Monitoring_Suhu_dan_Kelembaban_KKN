@@ -1,48 +1,74 @@
-# Sensor Monitoring System
+# 🌡️ Sensor Monitoring - MQTT Serverless Edition
 
-Sistem monitoring suhu dan kelembaban ruangan menggunakan Node.js, Express, Socket.IO, dan MQTT.
+Sistem monitoring suhu dan kelembaban real-time menggunakan **MQTT Serverless** dengan **Vercel** dan **Supabase**. Implementasi ini menggunakan teknik **retain message** untuk meminimalisir penggunaan listener dan memastikan data persistence dalam environment serverless.
 
-## Fitur
+## ✨ Features
 
-- Real-time monitoring suhu dan kelembaban
-- Dashboard web yang responsif
-- Integrasi MQTT untuk komunikasi sensor
-- Database PostgreSQL dengan Prisma ORM
-- Real-time updates menggunakan Socket.IO
+### 🚀 MQTT Serverless Architecture
+- **Retain Message System**: Menyimpan pesan MQTT dengan flag retain untuk quick access
+- **Automatic Data Recovery**: Memulihkan retain messages saat serverless function cold start
+- **Unlimited Historical Data**: Akses data lampau tanpa batas waktu
+- **Message Logging**: Log semua pesan MQTT untuk audit dan recovery
 
-## Teknologi yang Digunakan
+### 📊 Real-time Dashboard
+- **Live Sensor Data**: Temperature dan humidity real-time
+- **Interactive Charts**: Grafik data dengan berbagai periode waktu
+- **MQTT Status Monitoring**: Monitor koneksi dan retain messages
+- **Data Source Indicator**: Menampilkan sumber data (Retain/Database)
 
-- **Backend**: Node.js, Express.js
-- **Database**: PostgreSQL dengan Prisma ORM
-- **Real-time**: Socket.IO
-- **IoT Communication**: MQTT
-- **Frontend**: EJS, HTML, CSS, JavaScript
+### 🔧 Advanced Features
+- **Multi-device Support**: Support multiple sensor devices
+- **Responsive Design**: Optimized untuk desktop dan mobile
+- **Data Analytics**: Statistik dan tren data sensor
+- **Manual Recovery**: Button untuk manual data recovery
 
-## Prerequisites
+## 🏗️ Architecture
 
-- Node.js (v14 atau lebih tinggi)
-- PostgreSQL database
-- MQTT broker
+```
+ESP32/IoT Device → MQTT Broker → Vercel Serverless → Supabase Database
+                                       ↓
+                                Retain Messages Cache
+                                       ↓
+                                 Web Dashboard
+```
 
-## Installation
+## 🚀 Quick Start
 
-1. Clone repository ini:
+### 1. Clone Repository
 ```bash
-git clone <repository-url>
+git clone [repository-url]
 cd sensor-monitoring
 ```
 
-2. Install dependencies:
+### 2. Install Dependencies
 ```bash
 npm install
 ```
 
-3. Setup environment variables:
+### 3. Environment Setup
 ```bash
 cp .env.example .env
+# Edit .env dengan konfigurasi Anda
 ```
 
-4. Edit file `.env` dengan konfigurasi Anda:
+### 4. Database Setup
+```bash
+# Generate Prisma client
+npm run db:generate
+
+# Run migrations
+npm run db:deploy
+```
+
+### 5. Development
+```bash
+npm run dev
+```
+
+### 6. Test MQTT Service
+```bash
+npm run mqtt:test
+```
 ```
 DATABASE_URL="postgresql://username:password@localhost:5432/sensor_monitoring"
 MQTT_HOST="your-mqtt-broker-host"

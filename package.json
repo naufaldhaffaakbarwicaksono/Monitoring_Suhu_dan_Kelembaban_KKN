@@ -12,7 +12,9 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "db:health": "node db-health-check.js"
+    "db:health": "node db-health-check.js",
+    "mqtt:test": "node test-mqtt.js",
+    "deploy": "prisma migrate deploy && vercel --prod"
   },
   "dependencies": {
     "@prisma/client": "^6.11.1",
