@@ -304,6 +304,198 @@ app.get('/api/dashboard', async (req, res) => {
   }
 });
 
+// NEW: Endpoint untuk menerima data MQTT dan simpan ke database
+app.post('/api/sensor/data', async (req, res) => {
+  try {
+    const { temperature, humidity, deviceId, location, timestamp } = req.body;
+    
+    // Validasi data
+    if (temperature === undefined || humidity === undefined) {
+      return res.status(400).json({ 
+        error: 'Temperature and humidity are required',
+        received: req.body 
+      });
+    }
+    
+    // Validasi range nilai
+    if (typeof temperature !== 'number' || typeof humidity !== 'number') {
+      return res.status(400).json({ 
+        error: 'Temperature and humidity must be numbers' 
+      });
+    }
+    
+    if (temperature < -50 || temperature > 100) {
+      return res.status(400).json({ 
+        error: 'Temperature out of valid range (-50 to 100°C)' 
+      });
+    }
+    
+    if (humidity < 0 || humidity > 100) {
+      return res.status(400).json({ 
+        error: 'Humidity out of valid range (0 to 100%)' 
+      });
+    }
+    
+    // Simpan ke database
+    const reading = await dbAccess.insertReading({
+      temperature: parseFloat(temperature),
+      humidity: parseFloat(humidity),
+      deviceId: deviceId || 'SHT20-001',
+      location: location || 'Default Room',
+      timestamp: timestamp ? new Date(timestamp) : new Date()
+    });
+    
+    console.log(`Data saved: T=${temperature}°C, H=${humidity}%, Device=${deviceId || 'SHT20-001'}`);
+    
+    res.json({ 
+      success: true,
+      message: 'Sensor data saved successfully',
+      data: {
+        id: reading.id,
+        temperature: reading.temperature,
+        humidity: reading.humidity,
+        deviceId: reading.deviceId,
+        location: reading.location,
+        timestamp: reading.timestamp
+      }
+    });
+  } catch (error) {
+    console.error('Error saving sensor data:', error);
+    res.status(500).json({ 
+      error: 'Failed to save sensor data', 
+      details: error.message 
+    });
+  }
+});
+
+// NEW: Endpoint untuk batch insert data (multiple readings)
+app.post('/api/sensor/batch', async (req, res) => {
+  try {
+    const { readings } = req.body;
+    
+    if (!Array.isArray(readings) || readings.length === 0) {
+      return res.status(400).json({ 
+        error: 'Readings array is required and must not be empty' 
+      });
+    }
+    
+    if (readings.length > 100) {
+      return res.status(400).json({ 
+        error: 'Maximum 100 readings per batch' 
+      });
+    }
+    
+    const validReadings = [];
+    const errors = [];
+    
+    // Validasi setiap reading
+    readings.forEach((reading, index) => {
+      const { temperature, humidity, deviceId, location, timestamp } = reading;
+      
+      if (temperature === undefined || humidity === undefined) {
+        errors.push(`Reading ${index}: temperature and humidity required`);
+        return;
+      }
+      
+      if (typeof temperature !== 'number' || typeof humidity !== 'number') {
+        errors.push(`Reading ${index}: temperature and humidity must be numbers`);
+        return;
+      }
+      
+      if (temperature < -50 || temperature > 100 || humidity < 0 || humidity > 100) {
+        errors.push(`Reading ${index}: values out of valid range`);
+        return;
+      }
+      
+      validReadings.push({
+        temperature: parseFloat(temperature),
+        humidity: parseFloat(humidity),
+        deviceId: deviceId || 'SHT20-001',
+        location: location || 'Default Room',
+        timestamp: timestamp ? new Date(timestamp) : new Date()
+      });
+    });
+    
+    if (errors.length > 0) {
+      return res.status(400).json({ 
+        error: 'Validation errors', 
+        details: errors 
+      });
+    }
+    
+    // Simpan semua readings
+    const results = await dbAccess.insertMultipleReadings(validReadings);
+    
+    console.log(`Batch saved: ${results.length} readings from ${validReadings.length} submitted`);
+    
+    res.json({ 
+      success: true,
+      message: `${results.length} sensor readings saved successfully`,
+      count: results.length,
+      data: results
+    });
+  } catch (error) {
+    console.error('Error saving batch sensor data:', error);
+    res.status(500).json({ 
+      error: 'Failed to save batch sensor data', 
+      details: error.message 
+    });
+  }
+});
+
+// NEW: Webhook endpoint untuk MQTT broker (jika mendukung webhooks)
+app.post('/api/mqtt/webhook', async (req, res) => {
+  try {
+    const { topic, payload, timestamp, clientId } = req.body;
+    
+    console.log(`MQTT Webhook received - Topic: ${topic}, Client: ${clientId}`);
+    
+    // Parse payload jika JSON
+    let data;
+    try {
+      data = typeof payload === 'string' ? JSON.parse(payload) : payload;
+    } catch (parseError) {
+      console.log('Payload is not JSON, treating as text');
+      data = { raw: payload };
+    }
+    
+    // Jika topic sensor data, simpan ke database
+    if (topic && topic.includes('data') && data.temp !== undefined && data.hum !== undefined) {
+      const reading = await dbAccess.insertReading({
+        temperature: parseFloat(data.temp),
+        humidity: parseFloat(data.hum),
+        deviceId: data.deviceId || clientId || 'MQTT-WEBHOOK',
+        location: data.location || 'MQTT Source',
+        timestamp: timestamp ? new Date(timestamp) : new Date()
+      });
+      
+      console.log(`MQTT data saved via webhook: T=${data.temp}°C, H=${data.hum}%`);
+      
+      res.json({ 
+        success: true,
+        message: 'MQTT data processed and saved',
+        reading: reading
+      });
+    } else {
+      // Log saja jika bukan data sensor
+      console.log(`MQTT message logged: ${topic} = ${JSON.stringify(data)}`);
+      
+      res.json({ 
+        success: true,
+        message: 'MQTT message logged',
+        topic,
+        data
+      });
+    }
+  } catch (error) {
+    console.error('Error processing MQTT webhook:', error);
+    res.status(500).json({ 
+      error: 'Failed to process MQTT webhook', 
+      details: error.message 
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);

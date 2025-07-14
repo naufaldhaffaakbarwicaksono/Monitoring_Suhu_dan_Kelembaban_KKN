@@ -207,6 +207,116 @@ class DatabaseAccess {
   }
 
   /**
+   * Insert a new sensor reading
+   * @param {Object} data - Sensor reading data
+   * @param {number} data.temperature - Temperature value
+   * @param {number} data.humidity - Humidity value
+   * @param {string} data.deviceId - Device identifier
+   * @param {string} data.location - Location name
+   * @param {Date} data.timestamp - Reading timestamp
+   * @returns {Promise<Object>} Created sensor reading
+   */
+  async insertReading(data) {
+    const client = await this.createFreshClient();
+    
+    try {
+      const { temperature, humidity, deviceId, location, timestamp } = data;
+      
+      const reading = await client.sensorReading.create({
+        data: {
+          temperature: parseFloat(temperature),
+          humidity: parseFloat(humidity),
+          deviceId: deviceId || 'SHT20-001',
+          location: location || 'Default Room',
+          timestamp: timestamp || new Date(),
+          receivedAt: new Date()
+        }
+      });
+      
+      console.log(`New reading inserted: ID=${reading.id}, T=${reading.temperature}°C, H=${reading.humidity}%`);
+      return reading;
+    } catch (error) {
+      console.error('Error inserting reading:', error);
+      throw error;
+    } finally {
+      await client.$disconnect();
+    }
+  }
+
+  /**
+   * Insert multiple sensor readings (batch insert)
+   * @param {Array} readings - Array of sensor reading data
+   * @returns {Promise<Array>} Array of created sensor readings
+   */
+  async insertMultipleReadings(readings) {
+    const client = await this.createFreshClient();
+    
+    try {
+      const now = new Date();
+      
+      const dataToInsert = readings.map(reading => ({
+        temperature: parseFloat(reading.temperature),
+        humidity: parseFloat(reading.humidity),
+        deviceId: reading.deviceId || 'SHT20-001',
+        location: reading.location || 'Default Room',
+        timestamp: reading.timestamp || now,
+        receivedAt: now
+      }));
+      
+      // Use createMany for better performance
+      const result = await client.sensorReading.createMany({
+        data: dataToInsert,
+        skipDuplicates: true
+      });
+      
+      console.log(`Batch insert completed: ${result.count} readings inserted`);
+      
+      // Return the created readings (Note: createMany doesn't return the actual records)
+      // So we'll return the count and a sample of what was inserted
+      return {
+        count: result.count,
+        inserted: dataToInsert.slice(0, 5), // Return first 5 as sample
+        total: dataToInsert.length
+      };
+    } catch (error) {
+      console.error('Error inserting multiple readings:', error);
+      throw error;
+    } finally {
+      await client.$disconnect();
+    }
+  }
+
+  /**
+   * Delete old sensor readings (cleanup function)
+   * @param {number} daysToKeep - Number of days to keep (older data will be deleted)
+   * @returns {Promise<number>} Number of deleted records
+   */
+  async cleanupOldReadings(daysToKeep = 30) {
+    const client = await this.createFreshClient();
+    
+    try {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+      
+      const result = await client.sensorReading.deleteMany({
+        where: {
+          timestamp: {
+            lt: cutoffDate
+          }
+        }
+      });
+      
+      console.log(`Cleanup completed: ${result.count} old readings deleted`);
+      return result.count;
+    } catch (error) {
+      console.error('Error cleaning up old readings:', error);
+      throw error;
+    } finally {
+      await client.$disconnect();
+    }
+  }
+
+  /**
    * Test database connection
    * @returns {Promise<boolean>} Connection status
    */
