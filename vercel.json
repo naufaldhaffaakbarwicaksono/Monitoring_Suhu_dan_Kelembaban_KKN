@@ -3,10 +3,7 @@
   "builds": [
     {
       "src": "api/index.js",
-      "use": "@vercel/node",
-      "config": {
-        "maxLambdaSize": "50mb"
-      }
+      "use": "@vercel/node"
     },
     {
       "src": "public/**",
@@ -30,8 +27,7 @@
   "functions": {
     "api/index.js": {
       "maxDuration": 30,
-      "memory": 1024,
-      "regions": ["sin1"]
+      "memory": 1024
     }
   },
   "env": {
