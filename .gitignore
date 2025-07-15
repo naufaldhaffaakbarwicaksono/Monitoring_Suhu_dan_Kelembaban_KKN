@@ -24,9 +24,6 @@ pids/
 *.seed
 *.pid.lock
 
-# Prisma
-/generated/prisma
-
 # IDE files
 .vscode/
 .idea/

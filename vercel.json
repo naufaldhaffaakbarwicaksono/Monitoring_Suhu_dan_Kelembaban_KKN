@@ -3,7 +3,7 @@
   "functions": {
     "api/index.js": {
       "maxDuration": 30,
-      "memory": 1024
+      "memory": 512
     }
   },
   "routes": [
@@ -22,10 +22,5 @@
   ],
   "env": {
     "NODE_ENV": "production"
-  },
-  "build": {
-    "env": {
-      "ENABLE_PRISMA_MIGRATE": "1"
-    }
   }
 }

@@ -144,7 +144,8 @@ document.addEventListener('DOMContentLoaded', function() {
           const sourceElement = document.getElementById('data-source');
           if (sourceElement) {
             const sourceText = data.current.source === 'retain_message' ? 'MQTT Retain' : 
-                             data.current.source === 'database' ? 'Database' : 'Default';
+                             data.current.source === 'http_post' ? 'HTTP API' : 
+                             data.current.source === 'memory' ? 'Memory' : 'Default';
             sourceElement.textContent = `Source: ${sourceText}`;
             sourceElement.className = `data-source ${data.current.source}`;
           }

@@ -10,5 +10,4 @@ node_modules
 Thumbs.db
 archive/
 bin/
-prisma/migrations/
 debug.js

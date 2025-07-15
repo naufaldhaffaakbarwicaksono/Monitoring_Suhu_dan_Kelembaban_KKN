@@ -1,34 +1,44 @@
 /**
- * Vercel-Compatible Sensor Monitoring
+ * Vercel-Compatible Sensor Monitoring (In-Memory Storage)
  * 
  * MQTT PERSISTENT CONNECTIONS TIDAK BISA DI VERCEL!
+ * DATABASE DIHAPUS - MENGGUNAKAN IN-MEMORY STORAGE!
  * 
  * Solusi yang tersedia:
  * 1. HTTP POST langsung dari ESP32 (RECOMMENDED)
- * 2. MQTT Bridge service eksternal 
- * 3. Polling MQTT messages (dengan timeout yang pendek)
+ * 2. In-memory storage untuk data sensor
+ * 3. Data akan hilang saat restart (serverless nature)
  */
 
 const express = require('express');
 const path = require('path');
-const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
 const app = express();
 
-// Initialize Prisma with optimized settings for serverless
-const prisma = new PrismaClient({
-  datasources: {
-    db: {
-      url: process.env.DATABASE_URL,
-    },
-  },
-});
+// In-memory storage untuk data sensor (menggantikan database)
+let sensorReadings = [];
+let readingIdCounter = 1;
 
-// Global error handler untuk Prisma
-process.on('beforeExit', async () => {
-  await prisma.$disconnect();
-});
+// Fungsi untuk menyimpan data sensor ke memori
+function saveSensorDataToMemory(data) {
+  const reading = {
+    id: readingIdCounter++,
+    temperature: data.temperature,
+    humidity: data.humidity,
+    timestamp: new Date().toISOString(),
+    source: 'http_post'
+  };
+  
+  sensorReadings.push(reading);
+  
+  // Batasi hanya 1000 readings terakhir untuk menghemat memori
+  if (sensorReadings.length > 1000) {
+    sensorReadings = sensorReadings.slice(-1000);
+  }
+  
+  return reading;
+}
 
 // Middleware
 app.use(express.json({ limit: '10mb' }));
@@ -67,7 +77,7 @@ function formatErrorResponse(error, message = 'Error occurred', statusCode = 500
   };
 }
 
-// Save sensor data to database with validation
+// Save sensor data to memory with validation
 async function saveSensorData(data) {
   try {
     // Validate input data
@@ -86,18 +96,15 @@ async function saveSensorData(data) {
       throw new Error('Humidity out of valid range (0% to 100%)');
     }
     
-    const sensorReading = await prisma.sensorReading.create({
-      data: {
-        temperature: temperature,
-        humidity: humidity,
-        timestamp: new Date()
-      }
+    const sensorReading = saveSensorDataToMemory({
+      temperature: temperature,
+      humidity: humidity
     });
     
-    console.log('💾 Saved to database:', sensorReading.id, `T:${temperature}°C H:${humidity}%`);
+    console.log('💾 Saved to memory:', sensorReading.id, `T:${temperature}°C H:${humidity}%`);
     return sensorReading;
   } catch (error) {
-    console.error('❌ Database save error:', error);
+    console.error('❌ Memory save error:', error);
     throw error;
   }
 }
@@ -105,20 +112,20 @@ async function saveSensorData(data) {
 // Route utama - Dashboard
 app.get('/', async (req, res) => {
   try {
-    // Get latest sensor readings
-    const latestReadings = await prisma.sensorReading.findMany({
-      orderBy: { timestamp: 'desc' },
-      take: 50
-    });
+    // Get latest sensor readings from memory
+    const latestReadings = sensorReadings
+      .slice(-50)  // Last 50 readings
+      .reverse();  // Most recent first
 
     // Get statistics
-    const totalReadings = await prisma.sensorReading.count();
+    const totalReadings = sensorReadings.length;
+    const lastReading = sensorReadings[sensorReadings.length - 1] || null;
     
     const stats = {
       totalReadings,
-      lastReading: latestReadings[0] || null,
-      deployment: 'Vercel Serverless',
-      note: 'MQTT persistent connections not supported. Use HTTP POST endpoints.'
+      lastReading,
+      deployment: 'Vercel Serverless (In-Memory)',
+      note: 'Data stored in memory - will reset on deployment/restart'
     };
 
     res.render('index', {
@@ -180,9 +187,7 @@ app.post('/api/sensor/data', async (req, res) => {
 // API endpoint untuk mendapatkan data terbaru
 app.get('/api/latest', async (req, res) => {
   try {
-    const latest = await prisma.sensorReading.findFirst({
-      orderBy: { timestamp: 'desc' }
-    });
+    const latest = sensorReadings[sensorReadings.length - 1] || null;
     
     res.json(formatSuccessResponse(latest));
   } catch (error) {
@@ -195,11 +200,11 @@ app.get('/api/latest', async (req, res) => {
 app.get('/api/readings', async (req, res) => {
   try {
     const { limit = 100 } = req.query;
+    const limitNum = parseInt(limit);
     
-    const readings = await prisma.sensorReading.findMany({
-      orderBy: { timestamp: 'desc' },
-      take: parseInt(limit)
-    });
+    const readings = sensorReadings
+      .slice(-limitNum)  // Last N readings
+      .reverse();        // Most recent first
     
     res.json(formatSuccessResponse(readings, 'Readings fetched', { count: readings.length }));
   } catch (error) {
@@ -212,8 +217,11 @@ app.get('/api/readings', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    service: 'Sensor Monitor (Vercel)',
+    service: 'Sensor Monitor (Vercel - In-Memory)',
     timestamp: new Date().toISOString(),
+    storage: 'In-Memory (no database)',
+    current_readings: sensorReadings.length,
+    memory_limit: '1000 readings max',
     mqtt_support: false,
     mqtt_note: 'Use HTTP POST endpoints instead',
     endpoints: {
@@ -263,28 +271,23 @@ app.post('/api/sensor/test', async (req, res) => {
 // API endpoint untuk statistik
 app.get('/api/stats', async (req, res) => {
   try {
-    const totalReadings = await prisma.sensorReading.count();
-    
-    const latest = await prisma.sensorReading.findFirst({
-      orderBy: { timestamp: 'desc' }
-    });
+    const totalReadings = sensorReadings.length;
+    const latest = sensorReadings[sensorReadings.length - 1] || null;
     
     // Get readings from last 24 hours
     const since24h = new Date();
     since24h.setHours(since24h.getHours() - 24);
     
-    const readings24h = await prisma.sensorReading.count({
-      where: {
-        timestamp: {
-          gte: since24h
-        }
-      }
-    });
+    const readings24h = sensorReadings.filter(reading => 
+      new Date(reading.timestamp) >= since24h
+    ).length;
     
     res.json(formatSuccessResponse({
       total_readings: totalReadings,
       readings_24h: readings24h,
-      latest_reading: latest
+      latest_reading: latest,
+      storage_type: 'in-memory',
+      note: 'Data resets on deployment/restart'
     }, 'Statistics fetched'));
   } catch (error) {
     console.error('❌ API stats error:', error);
